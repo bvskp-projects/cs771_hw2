@@ -59,8 +59,32 @@ class CustomConv2DFunction(Function):
         # Fill in the code here
         #################################################################################
 
+        # Extract necessary dimensions
+        N, H = input_feats.size(0), input_feats.size(2)
+        C_o = weight.size(0)
+
+        # input_unfolded.shape = (N, C_i * K * K, H_o * W_o)
+        # unfold([[[[1, 2], [3, 4]], [[5, 6], [7, 8]]]]) = [[[[1, ..., 8]]]]
+        # weight_unfolded.shape = (C_o, C_i * K * K)
+        input_unfolded = unfold(input_feats, kernel_size, padding=padding, stride=stride)
+        weight_unfolded = weight.view(C_o, -1)
+
+        # output_unfolded.shape = (N, C_o, H_o * W_o)
+        output_unfolded = weight_unfolded @ input_unfolded
+        # Broadcast bias along
+        # - the output grid
+        # - the input channels
+        # Trivially, the batch dimension too but that's the case for all parameters
+        if bias is not None:
+            output_unfolded += bias.view(-1, 1)
+        # Fold the output to grid shape
+        # output.shape = (N, C_o, H_o, W_o)
+        H_o = (H + 2 * padding - kernel_size) // stride + 1
+        output = output_unfolded.view(N, C_o, H_o, -1)
+
         # save for backward (you need to save the unfolded tensor into ctx)
         # ctx.save_for_backward(your_vars, weight, bias)
+        ctx.save_for_backward(input_unfolded, weight, bias)
 
         return output
 
@@ -80,6 +104,7 @@ class CustomConv2DFunction(Function):
         """
         # unpack tensors and initialize the grads
         # your_vars, weight, bias = ctx.saved_tensors
+        input_unfolded, weight, bias = ctx.saved_tensors
         grad_input = grad_weight = grad_bias = None
 
         # recover the conv params
@@ -93,6 +118,27 @@ class CustomConv2DFunction(Function):
         # Fill in the code here
         #################################################################################
         # compute the gradients w.r.t. input and params
+
+        # grad_output_unfolded.shape = (N, C_o, H_o * W_o)
+        grad_output_unfolded = grad_output.view(grad_output.size(0), grad_output.size(1), -1)
+
+        # Compute input gradients
+        if ctx.needs_input_grad[0]:
+            # weight_unfolded.shape = (C_o, C_i * K * K)
+            # grad_input_unfolded.shape = (N, C_i * K * K, H_o * W_o)
+            # grad_input.shape = (N, C_i, H, W)
+            weight_unfolded = weight.view(weight.size(0), -1)
+            grad_input_unfolded = weight_unfolded.T @ grad_output_unfolded
+            grad_input = fold(grad_input_unfolded, (input_height, input_width), kernel_size, padding=padding, stride=stride)
+
+        if ctx.needs_input_grad[1]:
+            # input_transpose.shape = (N, H_o * W_o, C_i * K * K)
+            # grad_weight_unfolded.shape = (C_o, C_i * K * K)
+            # grad_weight.shape = (C_o, C_i, K, K)
+            input_transpose = torch.transpose(input_unfolded, 1, 2)
+            grad_weight_unfolded = grad_output_unfolded @ input_transpose
+            grad_weight = fold(grad_weight_unfolded, (kernel_size, kernel_size), kernel_size, padding=padding, stride=stride)
+            grad_weight = grad_weight.view(weight.size(0), -1, kernel_size, kernel_size)
 
         if bias is not None and ctx.needs_input_grad[2]:
             # compute the gradients w.r.t. bias (if any)

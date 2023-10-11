@@ -3,3 +3,6 @@ data/
 
 # not including logs folder for now
 logs/
+
+# do not include models folder either for now
+models/
