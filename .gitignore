@@ -1,2 +1,5 @@
 # data too large for git commit
 data/
+
+# not including logs folder for now
+logs/
