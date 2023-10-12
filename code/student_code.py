@@ -80,7 +80,8 @@ class CustomConv2DFunction(Function):
         # Fold the output to grid shape
         # output.shape = (N, C_o, H_o, W_o)
         H_o = (H + 2 * padding - kernel_size) // stride + 1
-        output = output_unfolded.view(N, C_o, H_o, -1)
+        # Use reshape instead of view to avoid in-place modification errors
+        output = output_unfolded.view(N, C_o, H_o, -1).clone()
 
         # save for backward (you need to save the unfolded tensor into ctx)
         # ctx.save_for_backward(your_vars, weight, bias)
@@ -131,14 +132,16 @@ class CustomConv2DFunction(Function):
             grad_input_unfolded = weight_unfolded.T @ grad_output_unfolded
             grad_input = fold(grad_input_unfolded, (input_height, input_width), kernel_size, padding=padding, stride=stride)
 
+        # Compute weight gradients
         if ctx.needs_input_grad[1]:
             # input_transpose.shape = (N, H_o * W_o, C_i * K * K)
             # grad_weight_unfolded.shape = (C_o, C_i * K * K)
             # grad_weight.shape = (C_o, C_i, K, K)
             input_transpose = torch.transpose(input_unfolded, 1, 2)
-            grad_weight_unfolded = grad_output_unfolded @ input_transpose
-            grad_weight = fold(grad_weight_unfolded, (kernel_size, kernel_size), kernel_size, padding=padding, stride=stride)
-            grad_weight = grad_weight.view(weight.size(0), -1, kernel_size, kernel_size)
+            # Sum over the batch dimension. Additive contribution.
+            grad_weight_unfolded = torch.sum(grad_output_unfolded @ input_transpose, dim=0)
+            # Use reshape, not view, to avoid in-place errors
+            grad_weight = grad_weight_unfolded.view(weight.size(0), -1, kernel_size, kernel_size)
 
         if bias is not None and ctx.needs_input_grad[2]:
             # compute the gradients w.r.t. bias (if any)
