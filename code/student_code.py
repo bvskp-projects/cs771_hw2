@@ -326,11 +326,13 @@ class SimpleViT(nn.Module):
         if use_abs_pos:
             # Initialize absolute positional embedding with image size
             # The embedding is learned from data
+
             self.pos_embed = nn.Parameter(
                 torch.zeros(
-                    1, img_size // patch_size, img_size // patch_size, embed_dim
+                    1, ((img_size // patch_size) * (img_size // patch_size)), embed_dim
                 )
             )
+
         else:
             self.pos_embed = None
 
@@ -339,6 +341,37 @@ class SimpleViT(nn.Module):
 
         ########################################################################
         # Fill in the code here
+
+        # Define patch embedding layer
+        self.patch_embed = PatchEmbed(
+            kernel_size=(patch_size, patch_size),
+            stride=(patch_size, patch_size),
+            in_chans=in_chans,
+            embed_dim=embed_dim,
+        )
+
+        # Define transformer layers that make up the transformer enconder
+        self.transformer_blocks = nn.ModuleList()
+        
+        for i in range(depth):
+            tblock = TransformerBlock(
+                dim=embed_dim,
+                num_heads=num_heads,
+                mlp_ratio=mlp_ratio,
+                qkv_bias=qkv_bias,
+                drop_path=dpr[i],
+                norm_layer=norm_layer,
+                act_layer=act_layer,
+                window_size=window_size if i in window_block_indexes else 0,
+            )
+
+            self.transformer_blocks.append(tblock)
+
+        # Define final head and normalization for logit outputs
+        self.norm = nn.LayerNorm(embed_dim)
+        self.head = nn.Linear(embed_dim, num_classes, bias=True)
+
+
         ########################################################################
         # the implementation shall start from embedding patches,
         # followed by some transformer blocks
@@ -361,6 +394,51 @@ class SimpleViT(nn.Module):
     def forward(self, x):
         ########################################################################
         # Fill in the code here
+
+        # Do patch embedding
+        x = self.patch_embed(x)
+
+        # Add in absolute position embeddings
+        if self.pos_embed is not None:
+            # First, transform absolute position embeddings into desired shape: (1, H, W, C)
+            h, w = (x.shape[1], x.shape[2]) # h * w = total number of patches
+            abs_pos = self.pos_embed
+            total_num_patches = abs_pos.shape[1] 
+            patches_per_side = int(math.sqrt(total_num_patches))
+            assert patches_per_side * patches_per_side == total_num_patches
+
+            # Handle the case if h/w do not equal patches_per_side
+            if patches_per_side != h or patches_per_side != w:
+                new_abs_pos = F.interpolate(
+                    abs_pos.reshape(1, patches_per_side, patches_per_side, -1).permute(0, 3, 1, 2),
+                    size=(h,w),
+                    mode="bicubic",
+                    align_corners=False,
+                )
+
+                abs_pos = new_abs_pos.permute(0, 2, 3, 1)
+            else:
+                abs_pos = abs_pos.reshape(1, h, w, -1)
+
+            # Add pos embeddings to x
+            x = x + abs_pos
+
+        # Apply transformation blocks
+        for tblock in self.transformer_blocks:
+            x = tblock(x)
+
+        # Apply final normalization/head
+        # Collapse the patches, reorder into (batch_size, embed_dim, #patches)
+        x = x.reshape(x.shape[0], -1, x.shape[-1]).permute(0, 2, 1)
+        # Aggregate the patch features by using global average
+        x = x.mean(2)
+        # Apply normalization layer
+        x = self.norm(x)
+        # Apply head layer
+        x = self.head(x)
+
+        # Now have output logits of form (batch_size, #classes). Can get predicted label by doing argmax...
+
         ########################################################################
         return x
 
