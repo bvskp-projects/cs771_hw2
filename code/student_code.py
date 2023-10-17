@@ -353,7 +353,7 @@ class SimpleViT(nn.Module):
 
         # Define transformer layers that make up the transformer enconder
         self.transformer_blocks = nn.ModuleList()
-        
+
         for i in range(depth):
             tblock = TransformerBlock(
                 dim=embed_dim,
