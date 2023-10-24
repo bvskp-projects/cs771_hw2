@@ -614,11 +614,43 @@ class PGDAttack(object):
         output = input.clone()
         input.requires_grad = False
 
-        # loop over the number of steps
-        # for _ in range(self.num_steps):
-        #################################################################################
-        # Fill in the code here
-        #################################################################################
+        for params in model.parameters():
+            params.requires_grad = False
+        
+
+        for i in range(self.num_steps):
+            
+            output.requires_grad = True
+            if output.grad is not None:
+                output.grad.zero_()
+
+            # Forward pass
+            outputs = model(output)
+
+            # Get least confident prediction
+            pred = outputs.argmax(1)
+            loss = self.loss_fn(outputs, pred)
+
+            # Zero gradients
+            model.zero_grad() 
+
+            # Backward pass
+            loss.backward()
+
+            # Ensure gradients are not None
+            if output.grad is not None:
+                sign_grad = torch.sign(output.grad)
+
+                # Update input  
+                output.data = output.data + self.step_size * sign_grad
+
+                # Project input back to epsilon ball
+                output.data = torch.max(torch.min(output.data, output + self.epsilon), output - self.epsilon)
+                
+                # Detach input from graph
+                output = output.detach()
+            else:
+                print("\tInput grad is None!!!!")
 
         return output
 
@@ -651,16 +683,31 @@ class GradAttention(object):
         Outputs:
           output: (torch tensor) a saliency map of size N * 1 * H * W
         """
-        # make sure input receive grads
         input.requires_grad = True
+
         if input.grad is not None:
             input.grad.zero_()
 
-        #################################################################################
-        # Fill in the code here
-        #################################################################################
+        for params in model.parameters():
+            params.requires_grad = False
+        
+        model.eval()
 
-        return output
+        # Forward pass
+        output = model(input) 
+        pred = output.argmax(1)
+        print(pred)
+        loss = self.loss_fn(output, pred)
+
+        # Backward pass
+        loss.backward() 
+
+        grads = input.grad.data.abs()
+       
+        # Take maximum across channels
+        saliency, _ = grads.max(1)
+        saliency = saliency.unsqueeze(1)
+        return saliency
 
 
 default_attention = GradAttention
