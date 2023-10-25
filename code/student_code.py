@@ -264,8 +264,58 @@ class SimpleNet(nn.Module):
 
     def forward(self, x):
         # you can implement adversarial training here
-        # if self.training:
-        #   # generate adversarial sample based on x
+        # Code adapted from PGDAttack
+        adversarial = False # change this depending on if you want adversarial training or not!
+        if self.training and adversarial:
+            num_steps = 5
+            step_size = 0.01
+            epsilon = 0.1
+            loss_fn = nn.CrossEntropyLoss()
+            input = x
+            # clone the input tensor and disable the gradients
+            output = input.clone()
+            input.requires_grad = False
+            
+
+            for i in range(num_steps):
+                
+                output.requires_grad = True
+                if output.grad is not None:
+                    output.grad.zero_()
+
+                # Forward pass
+                # Get class logits
+                outputs = self.features(output)
+                outputs = self.avgpool(outputs)
+                outputs = outputs.view(outputs.size(0), -1)
+                outputs = self.fc(outputs)
+
+                # Get least confident prediction
+                pred = outputs.argmax(1)
+                loss = loss_fn(outputs, pred)
+
+                # Zero gradients
+                self.zero_grad() 
+
+                # Backward pass
+                loss.backward()
+
+                # Ensure gradients are not None
+                if output.grad is not None:
+                    sign_grad = torch.sign(output.grad)
+
+                    # Update input  
+                    output.data = output.data + step_size * sign_grad
+
+                    # Project input back to epsilon ball
+                    output.data = torch.max(torch.min(output.data, output + epsilon), output - epsilon)
+                    
+                    # Detach input from graph
+                    output = output.detach()
+                else:
+                    print("\tInput grad is None!!!!")
+
+            x = output
         x = self.features(x)
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
