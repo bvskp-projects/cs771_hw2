@@ -165,7 +165,7 @@ def main(args):
     elif args.use_vit:
         model = default_vit_model(num_classes=100)
     else:
-        model = default_cnn_model(num_classes=100, attack = args.attack)
+        model = default_cnn_model(num_classes=100)
     model_arch = "simplenet"
     criterion = nn.CrossEntropyLoss()
     # put everthing to gpu
