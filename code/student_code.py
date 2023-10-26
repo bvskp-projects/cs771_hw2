@@ -264,62 +264,16 @@ class SimpleNet(nn.Module):
 
     def forward(self, x):
         # you can implement adversarial training here
-        # Code adapted from PGDAttack
-        adversarial = False # change this depending on if you want adversarial training or not!
+        adversarial = False
         if self.training and adversarial:
-            num_steps = 5
-            step_size = 0.01
-            epsilon = 0.1
-            loss_fn = nn.CrossEntropyLoss()
-            input = x
-            # clone the input tensor and disable the gradients
-            output = input.clone()
-            input.requires_grad = False
-            
-
-            for i in range(num_steps):
-                
-                output.requires_grad = True
-                if output.grad is not None:
-                    output.grad.zero_()
-
-                # Forward pass
-                # Get class logits
-                outputs = self.features(output)
-                outputs = self.avgpool(outputs)
-                outputs = outputs.view(outputs.size(0), -1)
-                outputs = self.fc(outputs)
-
-                # Get least confident prediction
-                pred = outputs.argmax(1)
-                loss = loss_fn(outputs, pred)
-
-                # Zero gradients
-                self.zero_grad() 
-
-                # Backward pass
-                loss.backward()
-
-                # Ensure gradients are not None
-                if output.grad is not None:
-                    sign_grad = torch.sign(output.grad)
-
-                    # Update input  
-                    output.data = output.data + step_size * sign_grad
-
-                    # Project input back to epsilon ball
-                    output.data = torch.max(torch.min(output.data, output + epsilon), output - epsilon)
-                    
-                    # Detach input from graph
-                    output = output.detach()
-                else:
-                    print("\tInput grad is None!!!!")
-
-            x = output
+            attacker = PGDAttack(F.cross_entropy, num_steps=5, step_size=0.01, epsilon=0.1)
+            x = attacker.perturb(self, x)
+        
         x = self.features(x)
         x = self.avgpool(x)
         x = x.view(x.size(0), -1)
         x = self.fc(x)
+        #print(x.argmin(dim=1))
         return x
     
 
@@ -660,47 +614,41 @@ class PGDAttack(object):
         Outputs:
           output: (torch tensor) an adversarial sample of the given network
         """
+
         # clone the input tensor and disable the gradients
         output = input.clone()
         input.requires_grad = False
 
-        for params in model.parameters():
-            params.requires_grad = False
+        # set model mode to eval so forward function does not loop infinitely
+        training = model.training
+        if training:
+            model.eval()
         
 
         for i in range(self.num_steps):
+            output.requires_grad_() # require gradients
             
-            output.requires_grad = True
             if output.grad is not None:
-                output.grad.zero_()
+                output.grad.zero_() 
 
             # Forward pass
-            outputs = model(output)
+            with torch.enable_grad():
+                logits = model(output)
 
-            # Get least confident prediction
-            pred = outputs.argmax(1)
-            loss = self.loss_fn(outputs, pred)
+                pred = logits.argmin(dim=1)
+                loss = self.loss_fn(logits, pred)
 
-            # Zero gradients
-            model.zero_grad() 
+            # Get the gradients and store them externally from model
+            gradients = torch.autograd.grad(loss, [output])[0]
 
-            # Backward pass
-            loss.backward()
+            # Create adversarial sample, clamp values
+            output = output.detach() + self.step_size * torch.sign(gradients.detach())
+            output = torch.max(torch.min(output.data, input + self.epsilon), input - self.epsilon)
+            output = torch.clamp(output, 0, 1)
 
-            # Ensure gradients are not None
-            if output.grad is not None:
-                sign_grad = torch.sign(output.grad)
-
-                # Update input  
-                output.data = output.data + self.step_size * sign_grad
-
-                # Project input back to epsilon ball
-                output.data = torch.max(torch.min(output.data, output + self.epsilon), output - self.epsilon)
-                
-                # Detach input from graph
-                output = output.detach()
-            else:
-                print("\tInput grad is None!!!!")
+        # Set model back to training if necessary
+        if training:
+            model.train()
 
         return output
 
