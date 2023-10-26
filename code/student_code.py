@@ -550,7 +550,7 @@ class SimpleViT(nn.Module):
 
 
 # change this to your model!
-default_cnn_model = SimpleNet
+default_cnn_model = CustomNet
 default_vit_model = SimpleViT
 
 # define data augmentation used for training, you can tweak things if you want
@@ -692,7 +692,6 @@ class GradAttention(object):
         # Forward pass
         output = model(input) 
         pred = output.argmax(1)
-        print(pred)
         loss = self.loss_fn(output, pred)
 
         # Backward pass
