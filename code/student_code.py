@@ -221,7 +221,7 @@ class CustomConv2d(Module):
 #################################################################################
 class SimpleNet(nn.Module):
     # a simple CNN for image classifcation
-    def __init__(self, conv_op=nn.Conv2d, num_classes=100):
+    def __init__(self, conv_op=nn.Conv2d, num_classes=100, attack = False):
         super(SimpleNet, self).__init__()
         # you can start from here and create a better model
         self.features = nn.Sequential(
@@ -250,6 +250,7 @@ class SimpleNet(nn.Module):
         # global avg pooling + FC
         self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
         self.fc = nn.Linear(512, num_classes)
+        self.attack = attack
 
     def reset_parameters(self):
         # init all params
@@ -264,8 +265,7 @@ class SimpleNet(nn.Module):
 
     def forward(self, x):
         # you can implement adversarial training here
-        adversarial = False
-        if self.training and adversarial:
+        if self.training and self.attack:
             attacker = PGDAttack(F.cross_entropy, num_steps=5, step_size=0.01, epsilon=0.1)
             x = attacker.perturb(self, x)
         
@@ -624,7 +624,6 @@ class PGDAttack(object):
         if training:
             model.eval()
         
-
         for i in range(self.num_steps):
             output.requires_grad_() # require gradients
             
@@ -642,9 +641,8 @@ class PGDAttack(object):
             gradients = torch.autograd.grad(loss, [output])[0]
 
             # Create adversarial sample, clamp values
-            output = output.detach() + self.step_size * torch.sign(gradients.detach())
+            output = output.detach() - self.step_size * torch.sign(gradients.detach())
             output = torch.max(torch.min(output.data, input + self.epsilon), input - self.epsilon)
-            output = torch.clamp(output, 0, 1)
 
         # Set model back to training if necessary
         if training:
